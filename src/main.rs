@@ -1,0 +1,101 @@
+use std::{collections::HashMap, path::PathBuf};
+
+use clap::{Parser, Subcommand};
+use renju_move_matching::move_matching::{move_matching_performance, plot_results, Performance};
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Arguments {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    Match {
+        name: String,
+        #[arg(short, long)]
+        engine_path: PathBuf,
+
+        #[arg(short, long)]
+        args: Option<String>,
+
+        #[arg(short, long)]
+        database_path: PathBuf,
+
+        #[arg(short, long)]
+        threads: Option<u32>,
+
+        #[arg(short, long)]
+        games: Option<usize>,
+
+        #[arg(short, long)]
+        move_time: Option<u32>,
+    },
+    Plot {
+        output_path: PathBuf,
+
+        #[arg(short, long, num_args = 1..)]
+        names: Vec<String>,
+
+        #[arg(short, long, num_args = 1..)]
+        perfs: Vec<PathBuf>,
+    },
+}
+
+fn main() {
+    env_logger::init();
+    let args = Arguments::parse();
+    match args.command {
+        Command::Plot {
+            output_path,
+            names,
+            perfs,
+        } => {
+            if names.len() != perfs.len() {
+                panic!()
+            }
+            let perfs = names
+                .iter()
+                .zip(perfs.iter())
+                .map(|(name, perf_path)| {
+                    let mut csv = csv::Reader::from_path(&perf_path).unwrap();
+                    Performance {
+                        name,
+                        matches: HashMap::from_iter(
+                            csv.records()
+                                .filter_map(|e| e.ok())
+                                .map(|r| r.deserialize::<(u64, u32, u32)>(None).unwrap())
+                                .map(|(elo, matches, total)| (elo, (matches, total))),
+                        ),
+                    }
+                })
+                .collect::<Vec<_>>();
+            plot_results(output_path, perfs.iter().collect())
+        }
+        Command::Match {
+            name,
+            engine_path,
+            args,
+            database_path,
+            threads,
+            games,
+            move_time,
+        } => {
+            move_matching_performance(
+                &name,
+                engine_path,
+                args.unwrap_or(String::new())
+                    .split_whitespace()
+                    .to_owned()
+                    .map(|s| s.to_string())
+                    .collect(),
+                database_path,
+                threads.unwrap_or(1),
+                games,
+                move_time.unwrap_or(5000),
+            )
+            .unwrap();
+        }
+    }
+}

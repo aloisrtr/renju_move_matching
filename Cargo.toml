@@ -1,0 +1,15 @@
+[package]
+name = "renju_move_matching"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+whr = {path = "../../whr"}
+quick-xml = "0.36"
+chrono = "0.4"
+plotters = "0.3.3"
+clap = { version = "4.4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+indicatif = "0.17"
+csv = "1.3"
