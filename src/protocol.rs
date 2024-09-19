@@ -5,7 +5,6 @@
 
 use std::{
     io::{BufRead, BufReader, Write},
-    path::Path,
     process::{Child, Stdio},
 };
 
@@ -13,7 +12,9 @@ use std::{
 pub enum EngineError {
     Error(String),
     Unknown(String),
+    ResponseParseError(ResponseParseErr),
     IoError(std::io::Error),
+    UnexpectedResponse(Response),
 }
 
 pub struct Engine {
@@ -22,14 +23,10 @@ pub struct Engine {
 }
 impl Engine {
     /// Opens a new engine.
-    pub fn open_engine<P: AsRef<Path>>(
-        id: usize,
-        exec: P,
-        args: &[String],
-        move_time: u32,
-    ) -> Result<Self, std::io::Error> {
-        let mut command = std::process::Command::new(exec.as_ref().as_os_str());
-        command.args(args.iter());
+    pub fn open_engine(id: usize, command: &str, move_time: u32) -> Result<Self, std::io::Error> {
+        let mut command_parts = command.split_whitespace();
+        let mut command = std::process::Command::new(command_parts.next().unwrap());
+        command.args(command_parts);
 
         let process = command
             .stdin(Stdio::piped())
@@ -87,7 +84,10 @@ impl Engine {
             reader
                 .read_line(response)
                 .map_err(|e| EngineError::IoError(e))?;
-            match response.parse::<Response>().unwrap() {
+            match response
+                .parse::<Response>()
+                .map_err(EngineError::ResponseParseError)?
+            {
                 Response::Ok => {
                     return Ok(Response::Ok);
                 }
@@ -165,6 +165,14 @@ impl<'a> std::fmt::Display for Command<'a> {
     }
 }
 
+#[derive(Debug)]
+pub enum ResponseParseErr {
+    MissingCommand,
+    MissingArgument,
+    MissingCoordinate,
+    InvalidCoordinate(String),
+}
+
 /// Responses from the Renju engine to the manager.
 #[derive(Clone, Debug)]
 pub enum Response {
@@ -178,17 +186,23 @@ pub enum Response {
     None,
 }
 impl std::str::FromStr for Response {
-    type Err = ();
+    type Err = ResponseParseErr;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut tokens = s.trim().split_whitespace();
-        let command = tokens.next().unwrap();
+        let mut tokens = s.split_whitespace();
+        let command = tokens.next().ok_or(ResponseParseErr::MissingCommand)?;
         Ok(match command.to_lowercase().as_str() {
             "ok" => Self::Ok,
             "suggest" => {
-                let coords = tokens.next().unwrap();
+                let coords = tokens.next().ok_or(ResponseParseErr::MissingArgument)?;
                 let mut coords = coords.split(',');
-                let x = coords.next().unwrap().parse::<u8>().unwrap();
-                let y = coords.next().unwrap().parse::<u8>().unwrap();
+                let x = coords.next().ok_or(ResponseParseErr::MissingCoordinate)?;
+                let y = coords.next().ok_or(ResponseParseErr::MissingCoordinate)?;
+                let x = x
+                    .parse::<u8>()
+                    .map_err(|_| ResponseParseErr::InvalidCoordinate(x.to_string()))?;
+                let y = y
+                    .parse::<u8>()
+                    .map_err(|_| ResponseParseErr::InvalidCoordinate(y.to_string()))?;
                 Self::Suggest((x, y))
             }
             "debug" => Self::Debug(tokens.collect::<Vec<_>>().join(" ")),
@@ -198,8 +212,14 @@ impl std::str::FromStr for Response {
             "" => Self::None,
             coords => {
                 let mut coords = coords.split(',');
-                let x = coords.next().unwrap().parse::<u8>().unwrap();
-                let y = coords.next().unwrap().parse::<u8>().unwrap();
+                let x = coords.next().ok_or(ResponseParseErr::MissingCoordinate)?;
+                let y = coords.next().ok_or(ResponseParseErr::MissingCoordinate)?;
+                let x = x
+                    .parse::<u8>()
+                    .map_err(|_| ResponseParseErr::InvalidCoordinate(x.to_string()))?;
+                let y = y
+                    .parse::<u8>()
+                    .map_err(|_| ResponseParseErr::InvalidCoordinate(y.to_string()))?;
                 Self::Move((x, y))
             }
         })

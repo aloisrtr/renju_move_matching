@@ -1,7 +1,10 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use renju_move_matching::move_matching::{move_matching_performance, plot_results, Performance};
+use renju_move_matching::{
+    move_matching_performance,
+    plot::{plot_results, Performance},
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -15,10 +18,7 @@ enum Command {
     Match {
         name: String,
         #[arg(short, long)]
-        engine_path: PathBuf,
-
-        #[arg(short, long)]
-        args: Option<String>,
+        engine_command: String,
 
         #[arg(short, long)]
         database_path: PathBuf,
@@ -55,28 +55,20 @@ fn main() {
             if names.len() != perfs.len() {
                 panic!()
             }
-            let perfs = names
-                .iter()
-                .zip(perfs.iter())
-                .map(|(name, perf_path)| {
-                    let mut csv = csv::Reader::from_path(&perf_path).unwrap();
-                    Performance {
-                        name,
-                        matches: HashMap::from_iter(
-                            csv.records()
-                                .filter_map(|e| e.ok())
-                                .map(|r| r.deserialize::<(u64, u32, u32)>(None).unwrap())
-                                .map(|(elo, matches, total)| (elo, (matches, total))),
-                        ),
-                    }
-                })
-                .collect::<Vec<_>>();
-            plot_results(output_path, perfs.iter().collect())
+            let perfs = names.iter().zip(perfs.iter()).map(|(name, perf_path)| {
+                let csv = csv::Reader::from_path(&perf_path)
+                    .unwrap()
+                    .into_deserialize();
+                Performance {
+                    name,
+                    matches: csv.filter_map(|e| e.ok()),
+                }
+            });
+            plot_results(output_path, perfs)
         }
         Command::Match {
             name,
-            engine_path,
-            args,
+            engine_command,
             database_path,
             threads,
             games,
@@ -84,12 +76,7 @@ fn main() {
         } => {
             move_matching_performance(
                 &name,
-                engine_path,
-                args.unwrap_or(String::new())
-                    .split_whitespace()
-                    .to_owned()
-                    .map(|s| s.to_string())
-                    .collect(),
+                &engine_command,
                 database_path,
                 threads.unwrap_or(1),
                 games,

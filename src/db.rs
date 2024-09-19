@@ -10,6 +10,8 @@ pub struct Game {
     pub white_elo: u64,
     pub moves: Vec<(u8, u8)>,
 }
+
+/// Parses a database of games.
 pub fn load_database<P: AsRef<Path>>(data_path: P) -> Result<Vec<Game>, ()> {
     let mut reader = Reader::from_file(data_path).unwrap();
     let mut buffer = vec![];
