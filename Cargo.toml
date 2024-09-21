@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-whr = {path = "../../whr"}
+whr = "0.2.1"
 quick-xml = "0.36"
 chrono = "0.4"
 plotters = { version = "0.3.7", features =  ["svg_backend"] }
