@@ -22,7 +22,6 @@ use crate::{
 pub struct Interface {
     experiment_name: String,
     move_matching: Arc<MoveMatching>,
-    last_checkpoint: Instant,
     exit_requested: bool,
 }
 impl Interface {
@@ -30,17 +29,21 @@ impl Interface {
         Self {
             experiment_name,
             move_matching,
-            last_checkpoint: Instant::now(),
             exit_requested: false,
         }
     }
 
     pub fn render_loop(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         let mut last_update = Instant::now();
-        while !self.exit_requested {
+        let mut last_checkpoint = Instant::now();
+        while !self.exit_requested && !self.move_matching.is_completed() {
             if last_update.elapsed() > Duration::from_secs_f32(1. / 10.) {
                 terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
                 last_update = Instant::now()
+            }
+            if last_checkpoint.elapsed() > Duration::from_secs(900) {
+                self.save_checkpoint();
+                last_checkpoint = Instant::now()
             }
             self.handle_events()?;
         }
@@ -65,7 +68,6 @@ impl Interface {
     }
 
     fn save_checkpoint(&mut self) {
-        self.last_checkpoint = Instant::now();
         save_results(
             format!("{}.csv", self.experiment_name),
             Performance {

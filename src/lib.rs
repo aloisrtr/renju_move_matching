@@ -68,7 +68,9 @@ pub fn move_matching_performance<P: AsRef<Path>>(
         })
         .collect::<Vec<_>>();
 
-    let _ = interface_handle.join().unwrap();
+    if let Err(e) = interface_handle.join().unwrap() {
+        eprintln!("Error: interface failed with {e:?}")
+    }
     ratatui::restore();
 
     log::info!("Saving final results");

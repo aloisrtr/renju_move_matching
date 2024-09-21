@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{command, Parser, Subcommand};
 use renju_move_matching::{
     move_matching_performance,
     plot::{plot_results, Performance},
@@ -17,10 +17,7 @@ struct Arguments {
 enum Command {
     Match {
         name: String,
-        #[arg(short, long)]
         engine_command: String,
-
-        #[arg(short, long)]
         database_path: PathBuf,
 
         #[arg(short, long)]
@@ -45,6 +42,7 @@ enum Command {
 
 fn main() {
     env_logger::init();
+
     let args = Arguments::parse();
     match args.command {
         Command::Plot {

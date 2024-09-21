@@ -43,16 +43,18 @@ impl MoveMatching {
     }
 
     pub fn from_checkpoint<P: AsRef<Path>>(games: &[Game], path: P) -> Self {
-        let mut csv = csv::Reader::from_path(&path).unwrap();
-        let matches = HashMap::from_iter(
-            csv.records()
-                .filter_map(|e| e.ok())
-                .map(|r| r.deserialize::<(u64, u32, u32)>(None).unwrap())
-                .map(|(elo, matches, total)| {
-                    (elo, (AtomicU32::new(matches), AtomicU32::new(total)))
-                }),
-        );
-        let mut positions: u64 = matches
+        let mut matching = Self::from_games(games);
+
+        let csv = csv::Reader::from_path(&path).unwrap().into_deserialize();
+        for (elo, matches, total) in csv.filter_map(|e| e.ok()) {
+            matching
+                .matches
+                .entry(elo)
+                .and_modify(|e| *e = (AtomicU32::new(matches), AtomicU32::new(total)))
+                .or_insert((AtomicU32::new(matches), AtomicU32::new(total)));
+        }
+        let mut positions: u64 = matching
+            .matches
             .values()
             .map(|(_, total)| total.load(std::sync::atomic::Ordering::Relaxed) as u64)
             .sum();
@@ -68,18 +70,11 @@ impl MoveMatching {
                 break;
             }
         }
+        matching.next = AtomicUsize::new(completed_games);
+        matching.completed_games = AtomicUsize::new(completed_games);
+        matching.completed_positions = AtomicU64::new(completed_positions);
 
-        MoveMatching {
-            matches,
-            games: games.to_vec(),
-            next: AtomicUsize::new(completed_games),
-            completed_games: AtomicUsize::new(completed_games),
-            total_positions: games
-                .iter()
-                .map(|g| g.moves.len().saturating_sub(6) as u64)
-                .sum(),
-            completed_positions: AtomicU64::new(completed_positions),
-        }
+        matching
     }
 
     pub fn completed_games(&self) -> u64 {
@@ -98,6 +93,10 @@ impl MoveMatching {
 
     pub fn total_positions(&self) -> u64 {
         self.total_positions
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.completed_games() == self.games.len() as u64
     }
 
     pub fn snapshot(&self) -> impl Iterator<Item = (u64, u32, u32)> + '_ {
