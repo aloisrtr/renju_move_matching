@@ -17,7 +17,7 @@ pub fn move_matching_performance<P: AsRef<Path>>(
     engine_command: &str,
     database_path: P,
     threads: u32,
-    games_count: Option<usize>,
+    games_per_bucket: usize,
     move_time: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let database_name = database_path
@@ -28,28 +28,18 @@ pub fn move_matching_performance<P: AsRef<Path>>(
         .unwrap();
 
     let games = load_database(database_path.as_ref()).unwrap();
-    let games = Vec::from(if let Some(i) = games_count {
-        &games[0..i]
-    } else {
-        &games
-    });
     log::info!("Loaded database {database_name}");
-    log::info!("Saving rating distribution to {name}_rating_distribution.png");
-    plot_rating_distribution(format!("{name}_rating_distribution.png"), &games);
+    log::info!("Saving rating distribution to rating_distribution.png");
+    plot_rating_distribution(format!("rating_distribution.png"), &games);
 
     // Open engines
-    let checkpoint_path = format!("{name}.csv");
-    let matching = Arc::new(if Path::new(&checkpoint_path).exists() {
-        MoveMatching::from_checkpoint(&games, &checkpoint_path)
-    } else {
-        MoveMatching::from_games(&games)
-    });
+    let matching = Arc::new(MoveMatching::from_games(&games, games_per_bucket));
 
     let terminal = ratatui::init();
     let interface = Interface::new(name.to_string(), matching.clone());
 
     let interface_handle = { std::thread::spawn(move || interface.render_loop(terminal)) };
-    let _workers_handle = (0..(threads as usize).min(games_count.unwrap_or(threads as usize)))
+    let _workers_handle = (0..(threads as usize).min(games_per_bucket))
         .map(|i| {
             let matching = matching.clone();
             let engine_command = engine_command.to_string();

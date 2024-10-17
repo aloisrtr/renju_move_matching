@@ -19,12 +19,10 @@ enum Command {
         name: String,
         engine_command: String,
         database_path: PathBuf,
+        games: usize,
 
         #[arg(short, long)]
         threads: Option<u32>,
-
-        #[arg(short, long)]
-        games: Option<usize>,
 
         #[arg(short, long)]
         move_time: Option<u32>,
@@ -78,7 +76,7 @@ fn main() {
                 database_path,
                 threads.unwrap_or(1),
                 games,
-                move_time.unwrap_or(5000),
+                move_time.unwrap_or(10000),
             )
             .unwrap();
         }

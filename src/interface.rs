@@ -76,7 +76,7 @@ impl Interface {
             },
         );
         plot_results(
-            format!("{}.png", self.experiment_name),
+            format!("{}.svg", self.experiment_name),
             std::iter::once(Performance {
                 name: &self.experiment_name,
                 matches: self.move_matching.snapshot(),
@@ -104,31 +104,57 @@ impl Interface {
     }
 
     fn draw_plot(&self, area: Rect, buffer: &mut Buffer) {
-        let mut brackets_performance = [(0, 0); 18];
-        for (elo, matches, total) in self.move_matching.snapshot() {
+        let mut brackets_performance = [[(0, 0); 2]; 18];
+        for (side, elo, matches, total) in self.move_matching.snapshot() {
             let bracket_index = (elo / 100) - 11;
-            brackets_performance[bracket_index as usize].0 += matches;
-            brackets_performance[bracket_index as usize].1 += total;
+            brackets_performance[bracket_index as usize][side as usize].0 += matches;
+            brackets_performance[bracket_index as usize][side as usize].1 += total;
         }
-        let mut plot_data = [(0., 0.); 18];
-        for (i, (matches, total)) in brackets_performance.into_iter().enumerate() {
+        let mut whole_plot_data = [(0., 0.); 18];
+        let mut black_plot_data = [(0., 0.); 18];
+        let mut white_plot_data = [(0., 0.); 18];
+        for (i, data) in brackets_performance.into_iter().enumerate() {
             let bracket = (i as u32 + 11) * 100;
-            let accuracy = if total == 0 {
+            let general_accuracy = if data[0].1 + data[1].1 == 0 {
                 0.
             } else {
-                (matches as f64 / total as f64) * 100f64
+                ((data[0].0 + data[1].0) as f64 / (data[0].1 + data[1].1) as f64) * 100f64
             };
-            plot_data[i] = (bracket as f64, accuracy)
+            let black_accuracy = if data[0].1 == 0 {
+                0.
+            } else {
+                (data[0].0 as f64 / data[0].1 as f64) * 100f64
+            };
+            let white_accuracy = if data[1].1 == 0 {
+                0.
+            } else {
+                (data[1].0 as f64 / data[1].1 as f64) * 100f64
+            };
+            whole_plot_data[i] = (bracket as f64, general_accuracy);
+            black_plot_data[i] = (bracket as f64, black_accuracy);
+            white_plot_data[i] = (bracket as f64, white_accuracy)
         }
 
-        let dataset = Dataset::default()
+        let whole_dataset = Dataset::default()
             .name(self.experiment_name.as_str().italic())
             .marker(ratatui::symbols::Marker::Braille)
             .style(Style::default().fg(Color::Red))
             .graph_type(ratatui::widgets::GraphType::Line)
-            .data(&plot_data);
+            .data(&whole_plot_data);
+        let black_dataset = Dataset::default()
+            .name("Black stones".italic())
+            .marker(ratatui::symbols::Marker::Braille)
+            .style(Style::default().fg(Color::Black))
+            .graph_type(ratatui::widgets::GraphType::Line)
+            .data(&black_plot_data);
+        let white_dataset = Dataset::default()
+            .name("White stones".italic())
+            .marker(ratatui::symbols::Marker::Braille)
+            .style(Style::default().fg(Color::White))
+            .graph_type(ratatui::widgets::GraphType::Line)
+            .data(&white_plot_data);
 
-        Chart::new(vec![dataset])
+        Chart::new(vec![black_dataset, white_dataset, whole_dataset])
             .block(
                 Block::bordered()
                     .title(Title::from("Performance").alignment(Alignment::Left))
