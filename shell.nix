@@ -1,15 +1,11 @@
-let
-  pkgs = import (fetchTarball("channel:nixpkgs-unstable")) {};
-in pkgs.mkShell {
+with import <nixpkgs> {};
+stdenv.mkDerivation {
+  name = "dev-renju-mm";
   buildInputs = with pkgs; [ 
-  pkg-config
-  linuxPackages_latest.perf 
-  fontconfig
-  freetype
-  openssl
-  vulkan-tools
-  vulkan-headers
-  vulkan-loader
-  vulkan-validation-layers
+    pkg-config
+    linuxPackages_latest.perf 
+    fontconfig
+    freetype
+    openssl
   ];
 }

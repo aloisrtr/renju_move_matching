@@ -16,17 +16,29 @@ use ratatui::{
 
 use crate::{
     move_matching::MoveMatching,
-    plot::{plot_results, save_results, Performance},
+    plot::{plot_results, save_results},
 };
 
 pub struct Interface {
     experiment_name: String,
     move_matching: Arc<MoveMatching>,
+    min_bracket: u32,
+    max_bracket: u32,
+    bracket_size: u32,
     exit_requested: bool,
 }
 impl Interface {
-    pub fn new(experiment_name: String, move_matching: Arc<MoveMatching>) -> Self {
+    pub fn new(
+        experiment_name: String,
+        min_bracket: u32,
+        max_bracket: u32,
+        bracket_size: u32,
+        move_matching: Arc<MoveMatching>,
+    ) -> Self {
         Self {
+            min_bracket,
+            max_bracket,
+            bracket_size,
             experiment_name,
             move_matching,
             exit_requested: false,
@@ -68,19 +80,10 @@ impl Interface {
     }
 
     fn save_checkpoint(&mut self) {
-        save_results(
-            format!("{}.csv", self.experiment_name),
-            Performance {
-                name: &self.experiment_name,
-                matches: self.move_matching.snapshot(),
-            },
-        );
+        save_results(&self.experiment_name, self.move_matching.snapshot());
         plot_results(
-            format!("{}.svg", self.experiment_name),
-            std::iter::once(Performance {
-                name: &self.experiment_name,
-                matches: self.move_matching.snapshot(),
-            }),
+            &self.experiment_name,
+            vec![(&self.experiment_name, self.move_matching.snapshot())],
         );
     }
 
@@ -92,29 +95,32 @@ impl Interface {
                 Block::new()
                     .borders(Borders::all())
                     .title(Title::from("Progress").alignment(Alignment::Left))
-                    .fg(Color::White),
+                    .fg(Color::Black),
             )
             .gauge_style(Color::Green)
-            .ratio(completed_positions as f64 / total_positions as f64)
+            .ratio((completed_positions as f64 / total_positions as f64).min(0.99))
             .label(Span::styled(
                 format!("{completed_positions}/{total_positions} positions"),
-                Style::new().fg(Color::White),
+                Style::new().fg(Color::Black),
             ))
             .render(area, buffer);
     }
 
     fn draw_plot(&self, area: Rect, buffer: &mut Buffer) {
-        let mut brackets_performance = [[(0, 0); 2]; 18];
-        for (side, elo, matches, total) in self.move_matching.snapshot() {
-            let bracket_index = (elo / 100) - 11;
-            brackets_performance[bracket_index as usize][side as usize].0 += matches;
-            brackets_performance[bracket_index as usize][side as usize].1 += total;
+        let brackets_count = ((self.max_bracket - self.min_bracket) / self.bracket_size) + 1;
+        let mut brackets_performance = vec![[(0, 0); 2]; brackets_count as usize];
+        for (elo, matches) in self.move_matching.snapshot() {
+            let bracket_index = (elo / self.bracket_size) - (self.min_bracket / self.bracket_size);
+            brackets_performance[bracket_index as usize][0].0 += matches.black_matches;
+            brackets_performance[bracket_index as usize][0].1 += matches.black_positions;
+            brackets_performance[bracket_index as usize][1].0 += matches.white_matches;
+            brackets_performance[bracket_index as usize][1].1 += matches.white_positions;
         }
-        let mut whole_plot_data = [(0., 0.); 18];
-        let mut black_plot_data = [(0., 0.); 18];
-        let mut white_plot_data = [(0., 0.); 18];
+        let mut whole_plot_data = vec![(0., 0.); brackets_count as usize];
+        let mut black_plot_data = vec![(0., 0.); brackets_count as usize];
+        let mut white_plot_data = vec![(0., 0.); brackets_count as usize];
         for (i, data) in brackets_performance.into_iter().enumerate() {
-            let bracket = (i as u32 + 11) * 100;
+            let bracket = (i as u32 + (self.min_bracket / self.bracket_size)) * self.bracket_size;
             let general_accuracy = if data[0].1 + data[1].1 == 0 {
                 0.
             } else {
@@ -137,20 +143,21 @@ impl Interface {
 
         let whole_dataset = Dataset::default()
             .name(self.experiment_name.as_str().italic())
-            .marker(ratatui::symbols::Marker::Braille)
-            .style(Style::default().fg(Color::Red))
+            .marker(ratatui::symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Green))
             .graph_type(ratatui::widgets::GraphType::Line)
+            .bold()
             .data(&whole_plot_data);
         let black_dataset = Dataset::default()
             .name("Black stones".italic())
-            .marker(ratatui::symbols::Marker::Braille)
+            .marker(ratatui::symbols::Marker::Dot)
             .style(Style::default().fg(Color::Black))
             .graph_type(ratatui::widgets::GraphType::Line)
             .data(&black_plot_data);
         let white_dataset = Dataset::default()
             .name("White stones".italic())
-            .marker(ratatui::symbols::Marker::Braille)
-            .style(Style::default().fg(Color::White))
+            .marker(ratatui::symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Yellow))
             .graph_type(ratatui::widgets::GraphType::Line)
             .data(&white_plot_data);
 
@@ -158,23 +165,27 @@ impl Interface {
             .block(
                 Block::bordered()
                     .title(Title::from("Performance").alignment(Alignment::Left))
-                    .fg(Color::White),
+                    .fg(Color::Black),
             )
             .x_axis(
                 Axis::default()
                     .title("Rating")
-                    .style(Style::default().white())
-                    .bounds([1400., 3000.])
-                    .labels([
-                        "1400", "1600", "1800", "2000", "2200", "2400", "2600", "2800", "3000",
-                    ]),
+                    .style(Style::default().black())
+                    .bounds([self.min_bracket as f64, self.max_bracket as f64])
+                    .labels(
+                        (self.min_bracket..=self.max_bracket)
+                            .step_by(self.bracket_size as usize)
+                            .map(|i| i.to_string()),
+                    ),
             )
             .y_axis(
                 Axis::default()
                     .title("Move matching %")
-                    .style(Style::default().white())
-                    .bounds([0., 80.])
-                    .labels(["0", "10", "20", "30", "40", "50", "60", "70", "80"]),
+                    .style(Style::default().black())
+                    .bounds([0., 100.])
+                    .labels([
+                        "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100",
+                    ]),
             )
             .legend_position(Some(ratatui::widgets::LegendPosition::TopLeft))
             .render(area, buffer);

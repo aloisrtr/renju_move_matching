@@ -2,17 +2,26 @@ use std::path::Path;
 
 use chrono::NaiveDate;
 use quick_xml::{events::Event, Reader};
+use rand::{seq::IteratorRandom, thread_rng};
 use whr::WhrBuilder;
 
 #[derive(Debug, Clone)]
 pub struct Game {
-    pub black_elo: u64,
-    pub white_elo: u64,
     pub moves: Vec<(u8, u8)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Bucket {
+    pub elo: u32,
+    pub games: Vec<Game>,
+}
+
 /// Parses a database of games.
-pub fn load_database<P: AsRef<Path>>(data_path: P) -> Result<Vec<Game>, ()> {
+pub fn load_database<P: AsRef<Path>>(
+    data_path: P,
+    bucket_size: u32,
+    games_per_bucket: u32,
+) -> Result<Vec<Bucket>, ()> {
     let mut reader = Reader::from_file(data_path).unwrap();
     let mut buffer = vec![];
 
@@ -160,12 +169,37 @@ pub fn load_database<P: AsRef<Path>>(data_path: P) -> Result<Vec<Game>, ()> {
         .with_virtual_games(2)
         .build();
 
-    Ok(games
-        .into_iter()
-        .map(|(black, white, _, time, moves)| Game {
-            black_elo: (whr.rating(&black, time).unwrap().elo().round() + 1900f64) as u64,
-            white_elo: (whr.rating(&white, time).unwrap().elo().round() + 1900f64) as u64,
-            moves,
-        })
-        .collect())
+    let mut buckets: Vec<Bucket> = vec![];
+    for (black, white, _, time, moves) in games {
+        let black_elo = (whr.rating(&black, time).unwrap().elo().round() + 1900f64) as u32;
+        let white_elo = (whr.rating(&white, time).unwrap().elo().round() + 1900f64) as u32;
+        if black_elo / bucket_size == white_elo / bucket_size {
+            let bucket = (black_elo / bucket_size) * bucket_size;
+            match buckets.binary_search_by_key(&bucket, |b| b.elo) {
+                Ok(i) => buckets[i].games.push(Game { moves }),
+                Err(i) => buckets.insert(
+                    i,
+                    Bucket {
+                        elo: bucket,
+                        games: vec![Game { moves }],
+                    },
+                ),
+            }
+        }
+    }
+
+    // Remove buckets with not enough games
+    buckets.retain(|b| b.games.len() as u32 >= games_per_bucket);
+    // Then pick `games_per_bucket` games randomly for each bucket
+    for bucket in buckets.iter_mut() {
+        bucket.games = bucket
+            .games
+            .iter()
+            .choose_multiple(&mut thread_rng(), games_per_bucket as usize)
+            .into_iter()
+            .map(|g| g.clone())
+            .collect()
+    }
+
+    Ok(buckets)
 }
