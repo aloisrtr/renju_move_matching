@@ -25,6 +25,7 @@ pub struct Interface {
     min_bracket: u32,
     max_bracket: u32,
     bracket_size: u32,
+    buckets_self_move_matching: Vec<(f64, f64)>,
     exit_requested: bool,
 }
 impl Interface {
@@ -34,6 +35,7 @@ impl Interface {
         max_bracket: u32,
         bracket_size: u32,
         move_matching: Arc<MoveMatching>,
+        buckets_self_move_matching: Vec<(f64, f64)>,
     ) -> Self {
         Self {
             min_bracket,
@@ -41,6 +43,7 @@ impl Interface {
             bracket_size,
             experiment_name,
             move_matching,
+            buckets_self_move_matching,
             exit_requested: false,
         }
     }
@@ -160,35 +163,46 @@ impl Interface {
             .style(Style::default().fg(Color::Yellow))
             .graph_type(ratatui::widgets::GraphType::Line)
             .data(&white_plot_data);
+        let self_move_matching = Dataset::default()
+            .name("Peak performance".italic())
+            .marker(ratatui::symbols::Marker::Dot)
+            .style(Style::default().fg(Color::Red))
+            .graph_type(ratatui::widgets::GraphType::Line)
+            .data(&self.buckets_self_move_matching);
 
-        Chart::new(vec![black_dataset, white_dataset, whole_dataset])
-            .block(
-                Block::bordered()
-                    .title(Title::from("Performance").alignment(Alignment::Left))
-                    .fg(Color::Black),
-            )
-            .x_axis(
-                Axis::default()
-                    .title("Rating")
-                    .style(Style::default().black())
-                    .bounds([self.min_bracket as f64, self.max_bracket as f64])
-                    .labels(
-                        (self.min_bracket..=self.max_bracket)
-                            .step_by(self.bracket_size as usize)
-                            .map(|i| i.to_string()),
-                    ),
-            )
-            .y_axis(
-                Axis::default()
-                    .title("Move matching %")
-                    .style(Style::default().black())
-                    .bounds([0., 100.])
-                    .labels([
-                        "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100",
-                    ]),
-            )
-            .legend_position(Some(ratatui::widgets::LegendPosition::TopLeft))
-            .render(area, buffer);
+        Chart::new(vec![
+            black_dataset,
+            white_dataset,
+            whole_dataset,
+            self_move_matching,
+        ])
+        .block(
+            Block::bordered()
+                .title(Title::from("Performance").alignment(Alignment::Left))
+                .fg(Color::Black),
+        )
+        .x_axis(
+            Axis::default()
+                .title("Rating")
+                .style(Style::default().black())
+                .bounds([self.min_bracket as f64, self.max_bracket as f64])
+                .labels(
+                    (self.min_bracket..=self.max_bracket)
+                        .step_by(self.bracket_size as usize)
+                        .map(|i| i.to_string()),
+                ),
+        )
+        .y_axis(
+            Axis::default()
+                .title("Move matching %")
+                .style(Style::default().black())
+                .bounds([0., 100.])
+                .labels([
+                    "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100",
+                ]),
+        )
+        .legend_position(Some(ratatui::widgets::LegendPosition::TopLeft))
+        .render(area, buffer);
     }
 }
 impl Widget for &Interface {

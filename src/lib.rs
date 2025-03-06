@@ -1,12 +1,14 @@
 use std::{path::Path, sync::Arc};
 
 use db::load_database;
+use game_graph::PositionGraph;
 use interface::Interface;
 use move_matching::MoveMatching;
 use plot::{plot_rating_distribution, plot_results, save_results};
 use protocol::Engine;
 
 pub mod db;
+pub mod game_graph;
 pub mod interface;
 pub mod move_matching;
 pub mod plot;
@@ -34,17 +36,27 @@ pub fn move_matching_performance<P: AsRef<Path>>(
     plot_rating_distribution(name, &buckets);
 
     // Open engines
-    let matching = Arc::new(MoveMatching::from_games(&buckets));
+    let matching = Arc::new(MoveMatching::from_games(&buckets, 100));
 
     let terminal = ratatui::init();
     let min_bracket = buckets.iter().map(|b| b.elo).min().unwrap();
     let max_bracket = buckets.iter().map(|b| b.elo).max().unwrap();
+    let self_move_matching = buckets
+        .iter()
+        .map(|b| {
+            (
+                b.elo as f64,
+                PositionGraph::from_games(&b.games).self_move_matching(false),
+            )
+        })
+        .collect();
     let interface = Interface::new(
         name.to_string(),
         min_bracket,
         max_bracket,
         bucket_size,
         matching.clone(),
+        self_move_matching,
     );
 
     let interface_handle = { std::thread::spawn(move || interface.render_loop(terminal)) };

@@ -3,17 +3,15 @@ use std::path::Path;
 use chrono::NaiveDate;
 use quick_xml::{events::Event, Reader};
 use rand::{seq::IteratorRandom, thread_rng};
+use romoku::game::{action::Action, coordinates::Site};
 use whr::WhrBuilder;
 
-#[derive(Debug, Clone)]
-pub struct Game {
-    pub moves: Vec<(u8, u8)>,
-}
+use crate::game_graph::PositionGraph;
 
 #[derive(Debug, Clone)]
 pub struct Bucket {
     pub elo: u32,
-    pub games: Vec<Game>,
+    pub position_graph: PositionGraph,
 }
 
 /// Parses a database of games.
@@ -150,7 +148,7 @@ pub fn load_database<P: AsRef<Path>>(
                             let x = m.chars().next().unwrap() as u8 - 'a' as u8;
                             let y = &m[1..].parse::<u8>().unwrap() - 1;
 
-                            moves.push((x, y))
+                            moves.push(Action::Place(Site::new(x, y)))
                         }
                     }
                     _ => {}
@@ -169,31 +167,24 @@ pub fn load_database<P: AsRef<Path>>(
         .with_virtual_games(2)
         .build();
 
-    let mut buckets: Vec<Bucket> = vec![];
+    let mut buckets: Vec<(u32, Vec<Vec<Action>>)> = vec![];
     for (black, white, _, time, moves) in games {
         let black_elo = (whr.rating(&black, time).unwrap().elo().round() + 1900f64) as u32;
         let white_elo = (whr.rating(&white, time).unwrap().elo().round() + 1900f64) as u32;
         if black_elo / bucket_size == white_elo / bucket_size {
             let bucket = (black_elo / bucket_size) * bucket_size;
-            match buckets.binary_search_by_key(&bucket, |b| b.elo) {
-                Ok(i) => buckets[i].games.push(Game { moves }),
-                Err(i) => buckets.insert(
-                    i,
-                    Bucket {
-                        elo: bucket,
-                        games: vec![Game { moves }],
-                    },
-                ),
+            match buckets.binary_search_by_key(&bucket, |(bucket, _)| *bucket) {
+                Ok(i) => buckets[i].1.push(moves),
+                Err(i) => buckets.insert(i, (bucket, vec![moves])),
             }
         }
     }
 
     // Remove buckets with not enough games
-    buckets.retain(|b| b.games.len() as u32 >= games_per_bucket);
+    buckets.retain(|(_, games)| games.len() as u32 >= games_per_bucket);
     // Then pick `games_per_bucket` games randomly for each bucket
-    for bucket in buckets.iter_mut() {
-        bucket.games = bucket
-            .games
+    for (_, games) in buckets.iter_mut() {
+        *games = games
             .iter()
             .choose_multiple(&mut thread_rng(), games_per_bucket as usize)
             .into_iter()
@@ -201,5 +192,11 @@ pub fn load_database<P: AsRef<Path>>(
             .collect()
     }
 
-    Ok(buckets)
+    Ok(buckets
+        .into_iter()
+        .map(|(bucket, games)| Bucket {
+            elo: bucket,
+            position_graph: PositionGraph::from_games(games),
+        })
+        .collect())
 }

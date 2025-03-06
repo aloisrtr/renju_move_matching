@@ -1,10 +1,14 @@
 use std::{
+    collections::HashMap,
     sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
 
+use romoku::game::action::Action;
+
 use crate::{
     db::{Bucket, Game},
+    game_graph::{Position, PositionGraph},
     protocol::{Command, Engine, EngineError, Response},
 };
 
@@ -32,79 +36,33 @@ pub struct MatchesSnapshot {
     pub white_matches: u32,
 }
 
-pub struct MoveMatching {
-    games: Vec<(u32, Game)>,
-    matches: Vec<(u32, Matches)>,
+pub struct MoveMatching<'a> {
+    positions: Vec<(u32, &'a Position)>,
+    matches: HashMap<u32, Matches>,
     next: AtomicUsize,
     total_positions: u64,
-    completed_games: AtomicUsize,
     completed_positions: AtomicU64,
+    chunk_size: usize,
 }
-impl MoveMatching {
-    pub fn from_games(buckets: &[Bucket]) -> Self {
+impl<'a> MoveMatching<'a> {
+    pub fn from_games(buckets: &'a [Bucket], chunk_size: usize) -> Self {
         Self {
-            matches: Vec::from_iter(buckets.iter().map(|b| (b.elo, Default::default()))),
+            matches: buckets
+                .iter()
+                .map(|b| (b.elo, Default::default()))
+                .collect(),
             total_positions: buckets
                 .iter()
-                .map(|b| {
-                    b.games
-                        .iter()
-                        .map(|g| g.moves.len().saturating_sub(6) as u64)
-                        .sum::<u64>()
-                })
-                .sum(),
-            games: buckets
-                .into_iter()
-                .flat_map(|b| b.games.iter().map(move |g| (b.elo, g.clone())))
+                .map(|b| b.position_graph.positions_count(false))
+                .sum::<usize>() as u64,
+            positions: buckets
+                .iter()
+                .flat_map(|b| b.position_graph.positions(false).map(|p| (b.elo, p)))
                 .collect(),
             next: AtomicUsize::new(0),
-            completed_games: AtomicUsize::new(0),
             completed_positions: AtomicU64::new(0),
+            chunk_size,
         }
-    }
-
-    /* pub fn from_checkpoint<P: AsRef<Path>>(games: &[Game], path: P) -> Self {
-        let mut matching = Self::from_games(games);
-
-        let csv = csv::Reader::from_path(&path).unwrap().into_deserialize();
-        for (white, elo, matches, total) in csv.filter_map(|e| e.ok()) {
-            if white {
-                &mut matching.white_matches
-            } else {
-                &mut matching.black_matches
-            }
-            .entry(elo)
-            .and_modify(|e| *e = (AtomicU32::new(matches), AtomicU32::new(total)))
-            .or_insert((AtomicU32::new(matches), AtomicU32::new(total)));
-        }
-        let mut positions: u64 = matching
-            .black_matches
-            .values()
-            .chain(matching.white_matches.values())
-            .map(|(_, total)| total.load(std::sync::atomic::Ordering::Relaxed) as u64)
-            .sum();
-
-        let mut completed_games = 0;
-        let mut completed_positions = 0;
-        for g in games {
-            if let Some(p) = positions.checked_sub(g.moves.len().saturating_sub(7) as u64) {
-                positions = p;
-                completed_positions += g.moves.len().saturating_sub(7) as u64;
-                completed_games += 1
-            } else {
-                break;
-            }
-        }
-        matching.next = AtomicUsize::new(completed_games);
-        matching.completed_games = AtomicUsize::new(completed_games);
-        matching.completed_positions = AtomicU64::new(completed_positions);
-
-        matching
-    } */
-
-    pub fn completed_games(&self) -> u64 {
-        self.completed_games
-            .load(std::sync::atomic::Ordering::Relaxed) as u64
     }
 
     pub fn completed_positions(&self) -> u64 {
@@ -112,16 +70,12 @@ impl MoveMatching {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn total_games(&self) -> u64 {
-        self.games.len() as u64
-    }
-
     pub fn total_positions(&self) -> u64 {
         self.total_positions
     }
 
     pub fn is_completed(&self) -> bool {
-        self.completed_games() == self.games.len() as u64
+        self.completed_positions() == self.total_positions
     }
 
     pub fn snapshot(&self) -> Vec<(u32, MatchesSnapshot)> {
@@ -131,28 +85,28 @@ impl MoveMatching {
             .collect()
     }
 
-    pub fn get_next_task<'a>(&'a self) -> Option<MoveMatchingTask<'a>> {
-        let next = self.next.fetch_add(1, std::sync::atomic::Ordering::Acquire);
-        if let Some((elo, game)) = self.games.get(next) {
-            let matches_index = self.matches.binary_search_by_key(elo, |(e, _)| *e).unwrap();
-            Some(MoveMatchingTask {
-                moves: &game.moves,
-                idx: 5,
-                matches: &self.matches[matches_index].1,
-                completed_games: &self.completed_games,
-                completed_positions: &self.completed_positions,
-            })
-        } else {
-            None
+    pub fn get_next_task(&'a self) -> Option<MoveMatchingTask<'a>> {
+        let next = self
+            .next
+            .fetch_add(self.chunk_size, std::sync::atomic::Ordering::Acquire);
+        if next >= self.positions.len() {
+            return None;
         }
+
+        // Get a chunk of positions
+        let positions = &self.positions[next..self.positions.len().min(next + self.chunk_size)];
+        Some(MoveMatchingTask {
+            positions: positions
+                .iter()
+                .map(|(bucket, pos)| (*pos, self.matches.get(bucket).unwrap()))
+                .collect(),
+            completed_positions: &self.completed_positions,
+        })
     }
 }
 
 pub struct MoveMatchingTask<'a> {
-    moves: &'a [(u8, u8)],
-    idx: usize,
-    matches: &'a Matches,
-    completed_games: &'a AtomicUsize,
+    positions: Vec<(&'a Position, &'a Matches)>,
     completed_positions: &'a AtomicU64,
 }
 impl<'a> MoveMatchingTask<'a> {
@@ -164,6 +118,16 @@ impl<'a> MoveMatchingTask<'a> {
         let mut white_matches = 0;
 
         let mut result = Ok(());
+        for (position, matches) in &self.positions {
+            std::thread::sleep(Duration::from_millis(500));
+            let (matches, positions) = if position.black_stones_turn() {
+                (&mut black_matches, &mut black_positions)
+            } else {
+                (&mut white_matches, &mut white_positions)
+            };
+            match engine.send_command(Command::Board())
+        }
+
         while self.idx < self.moves.len() {
             std::thread::sleep(Duration::from_millis(500));
             let (matches, positions) = if self.idx % 2 == 0 {
@@ -172,9 +136,9 @@ impl<'a> MoveMatchingTask<'a> {
                 (&mut white_matches, &mut white_positions)
             };
             match engine.send_command(Command::Board(&self.moves[0..self.idx])) {
-                Ok(Response::Move((x, y))) => {
-                    log::trace!("[{}] Move: {:?}", engine.id, (x, y));
-                    if (x, y) == self.moves[self.idx] {
+                Ok(Response::Move(a)) => {
+                    log::trace!("[{}] Move: {a}", engine.id);
+                    if a == self.moves[self.idx] {
                         *matches += 1;
                     }
                 }

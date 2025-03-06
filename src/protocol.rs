@@ -8,6 +8,8 @@ use std::{
     process::{Child, Stdio},
 };
 
+use romoku::game::{action::Action, coordinates::Site};
+
 #[derive(Debug)]
 pub enum EngineError {
     Error(String),
@@ -91,11 +93,11 @@ impl Engine {
                 Response::Ok => {
                     return Ok(Response::Ok);
                 }
-                Response::Move((x, y)) => {
-                    return Ok(Response::Move((x, y)));
+                Response::Move(a) => {
+                    return Ok(Response::Move(a));
                 }
-                Response::Suggest((x, y)) => {
-                    return Ok(Response::Move((x, y)));
+                Response::Suggest(a) => {
+                    return Ok(Response::Move(a));
                 }
                 Response::Debug(s) => {
                     log::debug!("[{}] {s}", self.id)
@@ -128,9 +130,9 @@ pub enum Command<'a> {
     Stop,
     ShowForbidden,
     HashClear,
-    Turn((u8, u8)),
-    Board(&'a [(u8, u8)]),
-    YixinBoard(&'a [(u8, u8)]),
+    Turn(Action),
+    Board(&'a [Action]),
+    YixinBoard(&'a [Action]),
     Info { key: &'a str, value: &'a str },
     End,
     Restart,
@@ -143,24 +145,43 @@ impl<'a> std::fmt::Display for Command<'a> {
             Self::Stop => write!(f, "yxstop\r\n"),
             Self::ShowForbidden => write!(f, "yxshowforbid\r\n"),
             Self::HashClear => write!(f, "yxhashclear\r\n"),
-            Self::Turn((x, y)) => write!(f, "TURN {x},{y}\r\n"),
+            Self::Turn(Action::Place(s)) => write!(f, "TURN {},{}\r\n", s.column(), s.row()),
             Self::Board(moves) => {
                 write!(f, "BOARD\r\n")?;
-                for (i, (x, y)) in moves.iter().enumerate() {
-                    write!(f, "{x},{y},{}\r\n", if i % 2 == 0 { 1 } else { 2 })?;
+                for (i, s) in moves.iter().enumerate().filter_map(|(i, a)| match a {
+                    Action::Place(s) => Some((i, s)),
+                    Action::Pass => None,
+                }) {
+                    write!(
+                        f,
+                        "{},{},{}\r\n",
+                        s.column(),
+                        s.row(),
+                        if i % 2 == 0 { 1 } else { 2 }
+                    )?;
                 }
                 write!(f, "DONE\r\n")
             }
             Self::YixinBoard(moves) => {
                 write!(f, "yxboard\r\n")?;
-                for (i, (x, y)) in moves.iter().enumerate() {
-                    write!(f, "{x},{y},{}\r\n", if i % 2 == 0 { 1 } else { 2 })?;
+                for (i, s) in moves.iter().enumerate().filter_map(|(i, a)| match a {
+                    Action::Place(s) => Some((i, s)),
+                    Action::Pass => None,
+                }) {
+                    write!(
+                        f,
+                        "{},{},{}\r\n",
+                        s.column(),
+                        s.row(),
+                        if i % 2 == 0 { 1 } else { 2 }
+                    )?;
                 }
                 write!(f, "DONE\r\n")
             }
             Self::Info { key, value } => write!(f, "INFO {key} {value}\r\n"),
             Self::End => write!(f, "END\r\n"),
             Self::Restart => write!(f, "RESTART\r\n"),
+            _ => panic!("Should not encounter branch"),
         }
     }
 }
@@ -177,8 +198,8 @@ pub enum ResponseParseErr {
 #[derive(Clone, Debug)]
 pub enum Response {
     Ok,
-    Move((u8, u8)),
-    Suggest((u8, u8)),
+    Move(Action),
+    Suggest(Action),
     Debug(String),
     Error(String),
     Unknown(String),
@@ -203,7 +224,7 @@ impl std::str::FromStr for Response {
                 let y = y
                     .parse::<u8>()
                     .map_err(|_| ResponseParseErr::InvalidCoordinate(y.to_string()))?;
-                Self::Suggest((x, y))
+                Self::Suggest(Action::Place(Site::new(x, y)))
             }
             "debug" => Self::Debug(tokens.collect::<Vec<_>>().join(" ")),
             "error" => Self::Error(tokens.collect::<Vec<_>>().join(" ")),
@@ -220,7 +241,7 @@ impl std::str::FromStr for Response {
                 let y = y
                     .parse::<u8>()
                     .map_err(|_| ResponseParseErr::InvalidCoordinate(y.to_string()))?;
-                Self::Move((x, y))
+                Self::Move(Action::Place(Site::new(x, y)))
             }
         })
     }
